@@ -2004,10 +2004,42 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
   }
   
   /**
-   * Prints this component plan at the scale given in the home print attributes or at a scale 
-   * that makes it fill <code>pageFormat</code> imageable size if this attribute is <code>null</code>.
+   * Prints one plan page for each viewable level, in home level order.
+   * Restores the selected level even if a page cannot be rendered.
+   * Homes without levels retain their original single-plan printing behavior.
    */
   public int print(Graphics g, PageFormat pageFormat, int pageIndex) {
+    if (pageIndex < 0) {
+      return NO_SUCH_PAGE;
+    }
+    if (this.home.getLevels().isEmpty()) {
+      return printSelectedLevel(g, pageFormat, pageIndex, false);
+    }
+    List<Level> viewableLevels = new ArrayList<Level>();
+    for (Level level : this.home.getLevels()) {
+      if (level.isViewable()) {
+        viewableLevels.add(level);
+      }
+    }
+    if (pageIndex >= viewableLevels.size()) {
+      return NO_SUCH_PAGE;
+    }
+    Level selectedLevel = this.home.getSelectedLevel();
+    try {
+      this.home.setSelectedLevel(viewableLevels.get(pageIndex));
+      printSelectedLevel(g, pageFormat, 0, true);
+      // Even an empty viewable level occupies its own page.
+      return PAGE_EXISTS;
+    } finally {
+      this.home.setSelectedLevel(selectedLevel);
+    }
+  }
+
+  /**
+   * Prints the selected plan, fitting it on one page when printing multiple levels.
+   */
+  private int printSelectedLevel(Graphics g, PageFormat pageFormat, int pageIndex,
+                                 boolean singlePage) {
     List<Selectable> printedItems = getPaintedItems(); 
     Rectangle2D printedItemBounds = getItemsBounds(g, printedItems);
     if (printedItemBounds != null) {
@@ -2020,9 +2052,13 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
       float columnIndex;
       int pagesPerRow;
       int pagesPerColumn;
-      if (this.home.getPrint() == null || this.home.getPrint().getPlanScale() == null) {
-        // Compute a scale that ensures the plan will fill the component if plan scale is null
+      if (singlePage || this.home.getPrint() == null || this.home.getPrint().getPlanScale() == null) {
+        // Fit each level on one page; honor a smaller explicitly requested scale.
         printScale = getPrintPreferredScale(g, pageFormat) * LengthUnit.centimeterToInch(72);
+        if (singlePage && this.home.getPrint() != null && this.home.getPrint().getPlanScale() != null) {
+          printScale = Math.min(printScale,
+              this.home.getPrint().getPlanScale().floatValue() * LengthUnit.centimeterToInch(72));
+        }
         if (pageIndex > 0) {
           return NO_SUCH_PAGE;
         }
@@ -2066,9 +2102,10 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
         // Print component contents
         paintContent(g2D, printScale, PaintMode.PRINT);
       } catch (InterruptedIOException ex) {
-        // Ignore exception because it may happen only in EXPORT paint mode 
-      }   
-      g2D.dispose();
+        // Ignore exception because it may happen only in EXPORT paint mode
+      } finally {
+        g2D.dispose();
+      }
       return PAGE_EXISTS;
     } else {
       return NO_SUCH_PAGE;
